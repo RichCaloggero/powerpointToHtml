@@ -61,6 +61,8 @@ See [Citation References](#citation-references) for details.
 | `-o`, `--output` | `<input>.html` | Output file path (single-file mode only) |
 | `--include-notes` | off | Include speaker notes as `<aside>` blocks |
 | `--no-bracket-refs` | off | Disable `[1,2,3]` bracketing of superscript citation numbers |
+| `--focusable-math` | off | Add `tabindex="0"` to each `<math>` element for keyboard navigation |
+| `--mathjax` | off | Inject MathJax 4 (`tex-mml-chtml`) from CDN for enhanced math rendering in all browsers |
 
 ---
 
@@ -96,6 +98,34 @@ Code blocks render as `<pre><code>` with original whitespace and indentation pre
 
 - **Superscript** (baseline > 0) --> `<sup>`
 - **Subscript** (baseline < 0) --> `<sub>`
+
+### Math Equations
+
+When equations are inserted in PowerPoint via **Insert > Equation**, they are stored internally as OMML (Office Math Markup Language). The converter translates OMML to standard W3C MathML and embeds it directly in the HTML.
+
+Supported constructs: fractions (`½`), radicals (√), sub/superscripts, integrals/sums/products (∫, ∑, ∏), matrices, parentheses/brackets, accents (hat, bar, tilde), limits, equation arrays, and more. Inline equations (mixed with surrounding text) and display (standalone) equations are both handled.
+
+**`--focusable-math`** — keyboard navigation for equations:
+
+```bash
+python pptx_to_accessible_html.py lecture.pptx --focusable-math
+```
+
+Adds `tabindex="0"` to every `<math>` element and a visible focus outline via CSS. Keyboard users can Tab through the page and land on individual equations, which is particularly useful for math-heavy course materials.
+
+**`--mathjax`** — cross-browser rendering via MathJax 4:
+
+```bash
+python pptx_to_accessible_html.py lecture.pptx --mathjax
+```
+
+Injects MathJax 4 (`tex-mml-chtml`) from CDN. Use this when the output will be viewed in browsers that do not support native MathML (primarily older Chrome). Requires an internet connection when the HTML file is opened. For offline use, omit this flag and use Firefox or Safari, which support native MathML.
+
+**Combining both flags:**
+
+```bash
+python pptx_to_accessible_html.py lecture.pptx --mathjax --focusable-math
+```
 
 ### Citation References
 
@@ -163,6 +193,9 @@ A `max-width: 100%` rule ensures they scale down gracefully on narrow screens wi
 - Superscript/subscript preserved as `<sup>`/`<sub>` for correct screen reader announcement
 - Citation numbers bracketed for non-visual clarity
 - Self-contained output -- images embedded as base64 data URIs, requiring no external assets
+- OMML math converted to MathML for screen reader announcement of equations
+- Equations optionally keyboard-focusable via `--focusable-math`
+- MathJax 4 polyfill available via `--mathjax` for broad browser compatibility
 
 ---
 
@@ -181,6 +214,9 @@ This prints each image's name, alt text, and decorative status -- useful for cat
 ## Recommended Workflow
 
 1. SMEs author alt text and mark decorative images in PowerPoint
-2. Run `inspect_pptx_images.py` to verify all images are correctly tagged
-3. Run `pptx_to_accessible_html.py` to generate the HTML
-4. Test with a screen reader
+2. Insert equations via **Insert > Equation** (not as images or typed Unicode)
+3. Run `inspect_pptx_images.py` to verify all images are correctly tagged
+4. Run `pptx_to_accessible_html.py` to generate the HTML
+   - Add `--mathjax` for Chrome compatibility or if unsure about the viewer's browser
+   - Add `--focusable-math` for courses where students navigate with keyboard only
+5. Test with a screen reader
