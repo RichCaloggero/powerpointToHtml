@@ -742,31 +742,58 @@ def get_slide_dimensions(prs):
 def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=None, slide_height=None, deck_title: str = "", bracket_refs: bool = True, focusable_math: bool = False, img_scale: float = 1.0) -> tuple:
     """Convert a single slide, returning (title_text, content_html_parts).
 
+    Uses a single ordered walk over the slide's spTree so that
+    <mc:AlternateContent> math shapes (invisible to python-pptx's slide.shapes)
+    are emitted in document order alongside regular shapes rather than being
+    appended at the end.
+
     The caller is responsible for section wrapping and title deduplication.
     """
     parts = []
     title_text = ""
-    content_shapes = []
 
-    # Separate title from content; skip slide numbers and running headers
+    # ── Step 1: build shape_id → Shape map from the python-pptx API ──
+    # Also extract the title and mark shapes to suppress (slide numbers,
+    # running headers) by simply omitting them from the map.
+    shape_map: dict = {}
     for shape in slide.shapes:
         if is_title_placeholder(shape) and shape_has_text(shape):
             title_text = shape.text_frame.text.strip()
         elif is_slide_number_placeholder(shape):
-            continue
+            pass  # skip — not added to map
         elif is_running_header(shape, deck_title):
-            continue
+            pass  # skip — not added to map
         else:
-            content_shapes.append(shape)
+            shape_map[shape.shape_id] = shape
 
-    # Process content shapes
-    for shape in content_shapes:
+    # ── Step 2: helper to read the shape id from a raw XML element ──
+    def _xml_shape_id(el) -> int:
+        """Return the integer shape id from any spTree child element, or -1."""
+        for nvpr_tag in (
+            f"{_P}nvSpPr",
+            f"{_P}nvPicPr",
+            f"{_P}nvGrpSpPr",
+            f"{_P}nvGraphicFramePr",
+            f"{_P}nvCxnSpPr",
+        ):
+            nvpr = el.find(nvpr_tag)
+            if nvpr is not None:
+                cnvpr = nvpr.find(f"{_P}cNvPr")
+                if cnvpr is not None:
+                    try:
+                        return int(cnvpr.get("id", -1))
+                    except (ValueError, TypeError):
+                        pass
+        return -1
+
+    # ── Step 3: helper to render one Shape object (reused for regular shapes) ──
+    def _render_shape(shape) -> None:
         # ── Image ──
         if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
             alt, is_decorative = get_alt_text_and_decorative(shape)
             if is_decorative:
                 parts.append(f'  <!-- Decorative image skipped (slide {slide_number}) -->')
-                continue
+                return
             if not alt:
                 alt = f"Image on slide {slide_number}"
             try:
@@ -797,9 +824,9 @@ def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=Non
         elif shape.has_text_frame:
             text = shape.text_frame.text.strip()
             if not text:
-                continue
+                return
             if is_subtitle_placeholder(shape):
-                parts.append(f"  <p class=\"subtitle\">{escape_html(text)}</p>")  # type 15 only
+                parts.append(f"  <p class=\"subtitle\">{escape_html(text)}</p>")
             else:
                 rendered = render_text_frame(shape.text_frame, base_heading_level=3, bracket_refs=bracket_refs, focusable_math=focusable_math)
                 if rendered:
@@ -830,39 +857,57 @@ def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=Non
                     except Exception:
                         pass
 
-    # ── AlternateContent shapes (contain OMML math; invisible to slide.shapes) ──
-    # PowerPoint wraps math-containing text boxes in <mc:AlternateContent> with
-    # a <mc:Choice Requires="a14"> holding the OMML-rich <p:sp> and a
-    # <mc:Fallback> holding a rasterised image.  python-pptx skips these, so we
-    # extract them directly from the slide XML.
+    # ── Step 4: walk spTree direct children in document order ──
+    # Regular shape tags dispatch via shape_map to _render_shape (keeps the
+    # full python-pptx API).  <mc:AlternateContent> wrappers (math shapes
+    # invisible to slide.shapes) are rendered inline via the XML renderer,
+    # preserving their position in the reading order.
+    _SHAPE_TAGS = {
+        f"{_P}sp",
+        f"{_P}pic",
+        f"{_P}grpSp",
+        f"{_P}graphicFrame",
+        f"{_P}cxnSp",
+    }
     try:
         spTree = slide._element.find(f".//{_P}spTree")
         if spTree is not None:
-            for mc_el in spTree.findall(f"{_MC}AlternateContent"):
-                choice = mc_el.find(f"{_MC}Choice")
-                if choice is None:
-                    continue
-                for sp_el in choice.findall(f"{_P}sp"):
-                    txBody_el = sp_el.find(f"{_P}txBody")
-                    if txBody_el is None:
+            for child in spTree:
+                tag = child.tag
+
+                if tag in _SHAPE_TAGS:
+                    shape_id = _xml_shape_id(child)
+                    shape = shape_map.get(shape_id)
+                    if shape is not None:
+                        _render_shape(shape)
+
+                elif tag == f"{_MC}AlternateContent":
+                    # Math-containing text box — render from XML in document order
+                    choice = child.find(f"{_MC}Choice")
+                    if choice is None:
                         continue
-                    # Check placeholder type to detect title shapes
-                    ph_type = ""
-                    nvPr = sp_el.find(f".//{_P}nvPr")
-                    if nvPr is not None:
-                        ph = nvPr.find(f"{_P}ph")
-                        if ph is not None:
-                            ph_type = ph.get("type", "")
-                    if ph_type in ("title", "ctrTitle"):
-                        if not title_text:
-                            title_text = "".join(
-                                (t.text or "")
-                                for t in txBody_el.iter(f"{_A}t")
-                            ).strip()
-                        continue
-                    rendered = render_txBody_from_xml(txBody_el, bracket_refs=bracket_refs, focusable_math=focusable_math)
-                    if rendered:
-                        parts.append(rendered)
+                    for sp_el in choice.findall(f"{_P}sp"):
+                        txBody_el = sp_el.find(f"{_P}txBody")
+                        if txBody_el is None:
+                            continue
+                        # Skip title placeholders (capture text if not yet found)
+                        ph_type = ""
+                        nvPr = sp_el.find(f".//{_P}nvPr")
+                        if nvPr is not None:
+                            ph = nvPr.find(f"{_P}ph")
+                            if ph is not None:
+                                ph_type = ph.get("type", "")
+                        if ph_type in ("title", "ctrTitle"):
+                            if not title_text:
+                                title_text = "".join(
+                                    (t.text or "")
+                                    for t in txBody_el.iter(f"{_A}t")
+                                ).strip()
+                            continue
+                        rendered = render_txBody_from_xml(txBody_el, bracket_refs=bracket_refs, focusable_math=focusable_math)
+                        if rendered:
+                            parts.append(rendered)
+                # All other tags (p:grpSpPr etc.) are silently ignored
     except Exception:
         pass
 

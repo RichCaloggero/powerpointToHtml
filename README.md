@@ -63,6 +63,7 @@ See [Citation References](#citation-references) for details.
 | `--no-bracket-refs` | off | Disable `[1,2,3]` bracketing of superscript citation numbers |
 | `--focusable-math` | off | Add `tabindex="0"` to each `<math>` element for keyboard navigation |
 | `--mathjax` | off | Inject MathJax 4 (`tex-mml-chtml`) from CDN for enhanced math rendering in all browsers |
+| `--img-scale PCT` | `100` | Scale images to PCT% of their slide dimensions (e.g. `60` for 60%) |
 
 ---
 
@@ -181,6 +182,16 @@ These should be reviewed and updated in the source PowerPoint before final conve
 
 Images are rendered at their actual PowerPoint dimensions, converted to pixels at 96 DPI.
 A `max-width: 100%` rule ensures they scale down gracefully on narrow screens without distortion.
+
+Use `--img-scale` to reduce image display size when the default feels too large for the page width:
+
+```bash
+python pptx_to_accessible_html.py presentation.pptx --img-scale 60
+```
+
+The value is a percentage of the shape's original slide dimensions. `max-width: 100%` is always
+retained, so images never overflow their container regardless of the scale value. The default
+(`100`) reproduces previous behavior.
 
 ---
 
