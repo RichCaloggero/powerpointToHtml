@@ -15,6 +15,7 @@ Usage:
   With notes:       python pptx_to_accessible_html.py presentation.pptx --include-notes
   Focusable math:   python pptx_to_accessible_html.py presentation.pptx --focusable-math
   With MathJax:     python pptx_to_accessible_html.py presentation.pptx --mathjax
+  Scale images:     python pptx_to_accessible_html.py presentation.pptx --img-scale 60
 
 Requirements:
   pip install python-pptx
@@ -738,7 +739,7 @@ def get_slide_dimensions(prs):
     return prs.slide_width, prs.slide_height
 
 
-def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=None, slide_height=None, deck_title: str = "", bracket_refs: bool = True, focusable_math: bool = False) -> tuple:
+def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=None, slide_height=None, deck_title: str = "", bracket_refs: bool = True, focusable_math: bool = False, img_scale: float = 1.0) -> tuple:
     """Convert a single slide, returning (title_text, content_html_parts).
 
     The caller is responsible for section wrapping and title deduplication.
@@ -771,8 +772,8 @@ def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=Non
             try:
                 img = shape.image
                 data_uri = image_to_data_uri(img.blob, img.content_type)
-                px_w = round(shape.width / 914400 * 96)
-                px_h = round(shape.height / 914400 * 96)
+                px_w = round(shape.width / 914400 * 96 * img_scale)
+                px_h = round(shape.height / 914400 * 96 * img_scale)
                 size_style = f' style="width:{px_w}px; height:{px_h}px; max-width:100%; height:auto;"'
                 parts.append(
                     f'  <figure>\n'
@@ -818,8 +819,8 @@ def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=Non
                         data_uri = image_to_data_uri(img.blob, img.content_type)
                         size_style = ""
                         if slide_width and slide_height and slide_width > 0 and slide_height > 0:
-                            px_w = round(child.width / 914400 * 96)
-                            px_h = round(child.height / 914400 * 96)
+                            px_w = round(child.width / 914400 * 96 * img_scale)
+                            px_h = round(child.height / 914400 * 96 * img_scale)
                             size_style = f' style="width:{px_w}px; height:{px_h}px; max-width:100%; height:auto;"'
                         parts.append(
                             f'  <figure>\n'
@@ -883,7 +884,7 @@ def convert_slide(slide, slide_number: int, include_notes: bool, slide_width=Non
     return (title_text, parts)
 
 
-def convert_pptx(input_path: Path, output_path: Path, include_notes: bool, bracket_refs: bool = True, focusable_math: bool = False, mathjax: bool = False) -> None:
+def convert_pptx(input_path: Path, output_path: Path, include_notes: bool, bracket_refs: bool = True, focusable_math: bool = False, mathjax: bool = False, img_scale: float = 1.0) -> None:
     """Convert a .pptx file to an accessible HTML file."""
     prs = Presentation(str(input_path))
     title = input_path.stem.replace("_", " ").replace("-", " ").title()
@@ -902,7 +903,7 @@ def convert_pptx(input_path: Path, output_path: Path, include_notes: bool, brack
     # Collect (title, content_parts, slide_number) for each slide
     slide_data = []
     for i, slide in enumerate(prs.slides, start=1):
-        slide_title, parts = convert_slide(slide, i, include_notes, slide_width, slide_height, deck_title=deck_title, bracket_refs=bracket_refs, focusable_math=focusable_math)
+        slide_title, parts = convert_slide(slide, i, include_notes, slide_width, slide_height, deck_title=deck_title, bracket_refs=bracket_refs, focusable_math=focusable_math, img_scale=img_scale)
         slide_data.append((slide_title, parts, i))
 
     # Group consecutive slides that share the same title
@@ -1132,12 +1133,21 @@ def main():
         action="store_true",
         help="Inject MathJax 4 (mml-chtml) script tags for enhanced math rendering in all browsers."
     )
+    parser.add_argument(
+        "--img-scale",
+        type=float,
+        default=100.0,
+        metavar="PCT",
+        help="Scale images to PCT%% of their slide dimensions (default: 100). "
+             "Use values like 50 or 75 to reduce image size."
+    )
     args = parser.parse_args()
 
     input_path    = Path(args.input)
     bracket_refs  = not args.no_bracket_refs
     focusable_math = args.focusable_math
     mathjax        = args.mathjax
+    img_scale      = max(0.01, args.img_scale) / 100.0
 
     # ── Batch mode: folder ──
     if input_path.is_dir():
@@ -1147,7 +1157,7 @@ def main():
             sys.exit(1)
         for pptx_file in pptx_files:
             out = pptx_file.with_suffix(".html")
-            convert_pptx(pptx_file, out, args.include_notes, bracket_refs=bracket_refs, focusable_math=focusable_math, mathjax=mathjax)
+            convert_pptx(pptx_file, out, args.include_notes, bracket_refs=bracket_refs, focusable_math=focusable_math, mathjax=mathjax, img_scale=img_scale)
         print(f"\nDone. {len(pptx_files)} file(s) converted.")
         return
 
@@ -1164,7 +1174,7 @@ def main():
     else:
         output_path = input_path.with_suffix(".html")
 
-    convert_pptx(input_path, output_path, args.include_notes, bracket_refs=bracket_refs, focusable_math=focusable_math, mathjax=mathjax)
+    convert_pptx(input_path, output_path, args.include_notes, bracket_refs=bracket_refs, focusable_math=focusable_math, mathjax=mathjax, img_scale=img_scale)
     print("Done.")
 
 
